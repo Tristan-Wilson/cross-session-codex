@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 5m
+  go: "1.27"
+
+linters:
+  default: standard
+  enable:
+    - misspell
+    - unconvert
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Tristan-Wilson/cross-session-codex

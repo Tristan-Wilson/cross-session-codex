@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "cross_session": {
+      "command": "sh",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/scripts/plugin-bridge.sh", "mcp"]
+    }
+  }
+}

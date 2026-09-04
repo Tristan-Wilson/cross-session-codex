@@ -1,0 +1,22 @@
+{
+  "name": "cross-session-codex",
+  "version": "0.1.0+codex.20260904132043",
+  "description": "Exchange local messages between Codex threads and Claude Code sessions using Claude's peer protocol.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Cross Session Codex",
+    "shortDescription": "Message local Claude and Codex sessions.",
+    "longDescription": "Discover local peers, send messages, receive replies in a durable per-thread inbox, and deliver inbox notices to Codex.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": "Enable messaging for this thread and list local sessions."
+  },
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,13 @@
+dist/
+.DS_Store
+.env
+.env.*
+*.log
+*.sqlite3*
+*.sock
+*.key
+worker.json
+config.json
+*-live-report.json
+capture*.json
+capture*.log
