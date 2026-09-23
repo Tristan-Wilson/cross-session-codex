@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"golang.org/x/sys/unix"
 )
 
 type rpcError struct {
@@ -34,13 +35,62 @@ type rpcReply struct {
 type appClient struct {
 	conn                   *websocket.Conn
 	serverPID              int
-	socketInfo             os.FileInfo
+	socket                 appSocket
 	mu                     sync.Mutex
 	next                   int64
 	pending                map[int64]chan rpcReply
 	closed                 bool
 	watchThread, watchName string
 	recorded               bool
+}
+
+// Newer Codex versions expose the control socket through a symlink into a
+// private per-user daemon directory. Keep both directory entries pinned while
+// dialing; the kernel credentials still identify the process at the other end.
+type appSocket struct {
+	path, target       string
+	linkInfo, sockInfo os.FileInfo
+}
+
+func inspectAppSocket(path string) (appSocket, error) {
+	s := appSocket{path: path, target: path}
+	link, err := os.Lstat(path)
+	if err != nil {
+		return s, err
+	}
+	if link.Mode().Type() == os.ModeSymlink {
+		var raw unix.Stat_t
+		if err = unix.Lstat(path, &raw); err != nil {
+			return s, err
+		}
+		if raw.Uid != uint32(os.Getuid()) {
+			return s, fmt.Errorf("app-server socket link is not owned by this user: %s", path)
+		}
+		s.target, err = os.Readlink(path)
+		if err != nil {
+			return s, err
+		}
+		if !filepath.IsAbs(s.target) || filepath.Clean(s.target) != s.target {
+			return s, fmt.Errorf("app-server socket link has an unsafe target: %s", path)
+		}
+		if err = vetParents(filepath.Dir(s.target)); err != nil {
+			return s, err
+		}
+		if _, err = owned(filepath.Dir(s.target), os.ModeDir, true); err != nil {
+			return s, err
+		}
+	}
+	s.sockInfo, err = owned(s.target, os.ModeSocket, true)
+	if err != nil {
+		return s, err
+	}
+	s.linkInfo = link
+	return s, nil
+}
+
+func sameAppSocket(a, b appSocket) bool {
+	return a.path == b.path && a.target == b.target &&
+		os.SameFile(a.linkInfo, b.linkInfo) && os.SameFile(a.sockInfo, b.sockInfo)
 }
 
 func defaultAppSocket() string {
@@ -53,20 +103,20 @@ func dialApp(ctx context.Context, path string) (*appClient, error) {
 	if _, err := owned(filepath.Dir(path), os.ModeDir, true); err != nil {
 		return nil, err
 	}
-	before, err := owned(path, os.ModeSocket, true)
+	before, err := inspectAppSocket(path)
 	if err != nil {
 		return nil, fmt.Errorf("codex app-server unavailable at %s: %w; start Codex with cross-session-codex launch", path, err)
 	}
 	serverPID := 0
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		var d net.Dialer
-		c, err := d.DialContext(ctx, "unix", path)
+		c, err := d.DialContext(ctx, "unix", before.target)
 		if err != nil {
 			return nil, err
 		}
 		pid, uid, err := peerCredentials(c.(*net.UnixConn))
-		after, e := owned(path, os.ModeSocket, true)
-		if err != nil || e != nil || uid != os.Getuid() || !os.SameFile(before, after) {
+		after, e := inspectAppSocket(path)
+		if err != nil || e != nil || uid != os.Getuid() || !sameAppSocket(before, after) {
 			closeQuietly(c)
 			return nil, errors.New("app-server socket identity changed or is not owned by this user")
 		}
@@ -79,7 +129,7 @@ func dialApp(ctx context.Context, path string) (*appClient, error) {
 		return nil, err
 	}
 	conn.SetReadLimit(64 << 20)
-	c := &appClient{conn: conn, serverPID: serverPID, socketInfo: before, pending: map[int64]chan rpcReply{}}
+	c := &appClient{conn: conn, serverPID: serverPID, socket: before, pending: map[int64]chan rpcReply{}}
 	go c.readLoop()
 	var init Object
 	err = c.call(ctx, "initialize", Object{"clientInfo": Object{"name": "cross_session_codex", "title": "Cross Session Codex", "version": Version}, "capabilities": Object{"experimentalApi": true}}, &init)

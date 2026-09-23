@@ -52,11 +52,11 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	before, err := owned(socket, os.ModeSocket, true)
+	before, err := inspectAppSocket(socket)
 	if err != nil {
 		return nil, err
 	}
-	if !os.SameFile(client.socketInfo, before) {
+	if !sameAppSocket(client.socket, before) {
 		return nil, errors.New("app-server socket changed after connecting; nothing was stopped")
 	}
 	owners, err := appServerOwners(socket)
@@ -67,7 +67,7 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
-	connections, err := appServerConnections(ctx, identity.PID, socket)
+	connections, err := appServerConnections(ctx, identity.PID, client.socket.target)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +85,7 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	}
 	// Recheck connections and process/socket identities immediately before the
 	// signal. Cooperating launchers cannot attach while we hold the startup lock.
-	if connections, err = appServerConnections(ctx, identity.PID, socket); err != nil {
+	if connections, err = appServerConnections(ctx, identity.PID, client.socket.target); err != nil {
 		return nil, err
 	} else if connections != 0 {
 		return nil, errors.New("a client connected during shutdown; close all sessions and retry")
@@ -94,8 +94,8 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	if err != nil || start != identity.Start {
 		return nil, errors.New("app-server process identity changed; nothing was stopped")
 	}
-	after, err := owned(socket, os.ModeSocket, true)
-	if err != nil || !os.SameFile(before, after) {
+	after, err := inspectAppSocket(socket)
+	if err != nil || !sameAppSocket(before, after) {
 		return nil, errors.New("app-server socket identity changed; nothing was stopped")
 	}
 	if err = ctx.Err(); err != nil {

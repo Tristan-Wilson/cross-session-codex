@@ -137,6 +137,47 @@ func (f *fakeApp) client(t *testing.T) *appClient {
 	t.Cleanup(c.Close)
 	return c
 }
+
+func TestAppServerPrivateSocketLink(t *testing.T) {
+	dir := testDir(t)
+	targetDir := filepath.Join(dir, "daemon")
+	must(t, os.Mkdir(targetDir, 0700))
+	target := filepath.Join(targetDir, "control.sock")
+	newFakeAppAt(t, target)
+	link := filepath.Join(dir, "app-server-control.sock")
+	must(t, os.Symlink(target, link))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c, err := dialApp(ctx, link)
+	must(t, err)
+	defer c.Close()
+	if c.socket.target != target {
+		t.Fatalf("connected to %q, want %q", c.socket.target, target)
+	}
+	if _, err = inspectAppSocket(link); err != nil {
+		t.Fatalf("private socket link rejected: %v", err)
+	}
+}
+
+func TestAppServerRejectsUnsafeSocketLinks(t *testing.T) {
+	dir := testDir(t)
+	targetDir := filepath.Join(dir, "daemon")
+	must(t, os.Mkdir(targetDir, 0700))
+	target := filepath.Join(targetDir, "control.sock")
+	newFakeAppAt(t, target)
+	for name, destination := range map[string]string{
+		"relative":   "daemon/control.sock",
+		"nonprivate": filepath.Join(filepath.Dir(dir), "missing.sock"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			link := filepath.Join(dir, name+".sock")
+			must(t, os.Symlink(destination, link))
+			if _, err := inspectAppSocket(link); err == nil {
+				t.Fatal("unsafe socket link accepted")
+			}
+		})
+	}
+}
 func TestAppServerExactThreadAttachment(t *testing.T) {
 	f := newFakeApp(t)
 	c := f.client(t)
