@@ -9,8 +9,11 @@ no Python, tmux, source checkout, MCP server, or additional API key. Claude Code
 must have its local cross-session messaging feature available. Codex CLI 0.153.2
 is the tested version; the app-server API used here is experimental.
 
-**Build:** Go **1.27.1**, Git, and Make. The project pins Go 1.27.1 and builds with
-`CGO_ENABLED=0`, including SQLite. Go downloads dependencies during the build.
+**Source build:** Go **1.27.1**, Git, and Make. The project pins Go 1.27.1 and builds
+with `CGO_ENABLED=0`, including SQLite. Go downloads dependencies during the build.
+Published binary archives, when available for the selected release, need no Go
+installation. Release v0.1.2 is source-only; the binary packaging described below
+applies to future releases made with the release workflow.
 
 ## Install by asking Codex
 
@@ -22,14 +25,18 @@ Point your Codex session at this README and ask:
 
 Instructions for the installing agent:
 
-1. Check `codex`, `git`, `make`, and Go. Use Go 1.27.1; an older Go installation
-   supporting toolchain downloads can run `GOTOOLCHAIN=go1.27.1 go version`.
-   Otherwise install Go from the official [downloads](https://go.dev/dl/).
-2. Clone this repository to a persistent source directory outside the user's
-   project. If it exists, inspect its remote and local changes before updating.
-3. Run `make -C /absolute/path/to/source install`. The installer copies the binary
-   and skill into user-local directories. It does not edit shell startup files,
-   grant hook trust, change managed policy, or require `sudo`.
+1. Check that `codex` is installed and on PATH. Choose an explicit published
+   release tag, not a moving `latest` URL. If it has binary assets, follow the
+   checksum-verified installation below for this machine's OS and architecture.
+2. Otherwise build from an explicitly selected source tag or commit using Git,
+   Make, and Go 1.27.1. An older Go installation supporting toolchain downloads
+   can run `GOTOOLCHAIN=go1.27.1 go version`. Keep the checkout outside the user's
+   project; inspect its remote and local changes before updating an existing one.
+3. Run the verified binary's `install` command, or
+   `make -C /absolute/path/to/source install` for a source build. The installer
+   copies the binary and embedded skill into user-local directories. It does not
+   edit shell startup files, grant hook trust, change managed policy, or require
+   `sudo`. Record the chosen tag/commit and verify `version` and `capabilities`.
 4. Read this conversation's UUID from `CODEX_THREAD_ID`. Never choose a thread
    by directory, peer name, or “most recent.” Inspect `status`. If the thread has
    a live launcher-owned client, use `start --name NAME --inbound accept` only
@@ -50,13 +57,88 @@ only to peers authorized by the user.
 
 ## Manual installation and startup
 
-From any directory:
+### Pinned binary installation
+
+Choose a release with uploaded binaries from the
+[releases page](https://github.com/Tristan-Wilson/cross-session-codex/releases).
+Replace `vX.Y.Z` below with that exact tag. It is a placeholder, not an existing
+release; v0.1.2 has no binary assets and requires the source-build path below.
+
+This example requires `codex`, GitHub CLI (`gh`), `tar`, `awk`, and either
+`sha256sum` (Linux) or `shasum` (macOS). It downloads into a fresh directory,
+checks the chosen archive and release manifest against `SHA256SUMS`, and only
+then extracts and runs the existing self-installer. Checksums establish integrity
+against the published checksum file; they are not an independent publisher
+signature. The workflow does not Developer ID sign or notarize macOS binaries;
+Go may apply ad-hoc signing. No downloaded script is piped into a shell.
 
 ```sh
+(
+  set -eu
+  csc_release=vX.Y.Z
+  case "$(uname -s)" in
+    Linux) csc_os=linux ;;
+    Darwin) csc_os=darwin ;;
+    *) printf 'Unsupported operating system\n' >&2; exit 1 ;;
+  esac
+  case "$(uname -m)" in
+    x86_64|amd64) csc_arch=amd64 ;;
+    arm64|aarch64) csc_arch=arm64 ;;
+    *) printf 'Unsupported architecture\n' >&2; exit 1 ;;
+  esac
+  csc_archive="cross-session-codex_${csc_release}_${csc_os}_${csc_arch}.tar.gz"
+  csc_download_dir="$(mktemp -d)"
+  gh release download "$csc_release" \
+    --repo Tristan-Wilson/cross-session-codex \
+    --dir "$csc_download_dir" \
+    --pattern "$csc_archive" --pattern SHA256SUMS --pattern release.json
+  cd "$csc_download_dir"
+  awk -v archive="$csc_archive" \
+    '$2 == archive { print; archives++ }
+     $2 == "release.json" { print; manifests++ }
+     END { if (archives != 1 || manifests != 1) exit 1 }' \
+    SHA256SUMS > selected-checksums
+  case "$csc_os" in
+    linux) sha256sum -c selected-checksums ;;
+    darwin) shasum -a 256 -c selected-checksums ;;
+  esac
+  tar -xzf "$csc_archive"
+  ./cross-session-codex version
+  ./cross-session-codex capabilities
+  ./cross-session-codex install
+  printf 'Verified download retained at %s\n' "$csc_download_dir"
+)
+```
+
+Each archive includes `cross-session-codex`, `README.md`, and
+`docs/LAUNCH_HANDSHAKE.md`, plus `docs/RELEASING.md` when present in the source.
+The messaging skill is embedded in the executable and installed by `install`;
+it is not a separate archive file. `release.json`
+records the source commit, build metadata, and per-platform hashes. See
+[release packaging](docs/RELEASING.md) for the exact provenance and publishing
+rules.
+
+### Source installation
+
+The source-only v0.1.2 tag is an explicit example; choose a different published
+tag deliberately when desired. Use a fresh destination, or inspect an existing
+checkout's changes before switching revisions:
+
+```sh
+csc_source_tag=v0.1.2
 mkdir -p "$HOME/.local/share"
-git clone https://github.com/Tristan-Wilson/cross-session-codex.git "$HOME/.local/share/cross-session-codex-source"
+git clone --branch "$csc_source_tag" --depth 1 \
+  https://github.com/Tristan-Wilson/cross-session-codex.git \
+  "$HOME/.local/share/cross-session-codex-source"
+git -C "$HOME/.local/share/cross-session-codex-source" rev-parse HEAD
 make -C "$HOME/.local/share/cross-session-codex-source" install
 ```
+
+Historical v0.1.2 builds report `0.2.0-dev`; that tag predates version stamping.
+Record its exact source commit instead of treating that version string as release
+provenance. Do not move or rewrite the historical tag to change this behavior.
+
+### Start the installed CLI
 
 Then, from your **project directory in a normal terminal**, launch Codex:
 
@@ -256,14 +338,15 @@ client ownership. Delivery stays pinned to its original thread UUID.
 
 ## Upgrade, paths, and uninstall
 
-```sh
-git -C "$HOME/.local/share/cross-session-codex-source" pull --ff-only
-make -C "$HOME/.local/share/cross-session-codex-source" install
-```
+For a binary upgrade, repeat the pinned download, checksum verification, and
+self-install steps with the explicitly selected new tag in a fresh download
+directory. For a source upgrade, inspect local changes, select an exact new tag
+or commit, and run `make install` from that checkout. Do not replace a pinned
+installation by blindly building a moving branch.
 
 Restart participating workers to load the new binary. Old releases remain for
 running processes. The installer refuses to overwrite unrelated launchers and
-skills. `dist/cross-session-codex install --help` describes `--prefix`, `--bin-dir`,
+skills. `cross-session-codex install --help` describes `--prefix`, `--bin-dir`,
 `--skill-dir`, and `--no-skill`.
 
 | Default path | Purpose |
@@ -306,6 +389,19 @@ make check        # Formatting, go vet, golangci-lint, and race tests
 make build        # CGO-free dist/cross-session-codex
 make cross-build  # macOS/Linux, arm64/amd64
 ```
+
+Native and cross-platform Make builds stamp the full source commit and its UTC
+commit time in `version` as `commit` and `build_date`. A clean, unambiguous exact
+release tag supplies the version;
+other builds use `v0.0.0-snapshot.<12-character-commit>` with `.dirty` when the
+working tree is dirty. Plain `go build` remains a development build and does not
+establish release provenance. `capabilities` is the companion API compatibility
+check, independent of the version label.
+
+Maintainers can prepare non-publishing archives with `make release-snapshot`, or
+validate an existing clean release tag with `make release TAG=vX.Y.Z`. See
+[the release guide](docs/RELEASING.md) before preparing or publishing artifacts.
+Snapshot packaging always uses a nonrelease label, even at a clean tagged commit.
 
 `golangci-lint` is pinned to v2.13.2 and built with Go 1.27.1. Its standard linters
 include `errcheck`, `govet`, `ineffassign`, `staticcheck`, and `unused`; this project

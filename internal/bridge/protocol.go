@@ -37,8 +37,6 @@ const (
 	escapedClosingTag = `<\/cross-session-message>`
 )
 
-var Version = "0.2.0-dev"
-
 type Object = map[string]any
 
 // Cleanup failures cannot usefully change an already committed result. Writes,
