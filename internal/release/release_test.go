@@ -230,7 +230,12 @@ func TestReleaseFailureNeverPublishesOrOverwrites(t *testing.T) {
 }
 
 func TestReleaseSnapshotAndSourceBuildModes(t *testing.T) {
-	root := releaseTestRepo(t)
+	// Exercise a source alias on every host, not only macOS where temporary
+	// paths commonly spell /private/var as /var. The compiler must use the
+	// selected directory, but its canonical path need not retain that spelling.
+	repository := releaseTestRepo(t)
+	root := filepath.Join(t.TempDir(), "source-alias")
+	releaseMust(t, os.Symlink(repository, root))
 	releaseGit(t, root, "tag", "v0.1.3")
 	compiler := &testCompiler{}
 	manifest, err := run(context.Background(), Options{Source: root, Output: filepath.Join(root, "dist", "snapshot"), Snapshot: true}, compiler.command)
@@ -238,8 +243,12 @@ func TestReleaseSnapshotAndSourceBuildModes(t *testing.T) {
 	if manifest.Release || manifest.SourceDirty || manifest.Tag != "" || !strings.HasPrefix(manifest.Version, "v0.0.0-snapshot.") {
 		t.Fatalf("tagged snapshot mislabeled as release: %+v", manifest)
 	}
+	selectedDirectory, err := os.Stat(root)
+	releaseMust(t, err)
 	for _, source := range compiler.roots {
-		if source != root {
+		compiledDirectory, err := os.Stat(source)
+		releaseMust(t, err)
+		if !os.SameFile(compiledDirectory, selectedDirectory) {
 			t.Fatalf("snapshot did not compile selected worktree: %q", source)
 		}
 	}
