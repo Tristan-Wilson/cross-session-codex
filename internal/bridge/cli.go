@@ -29,6 +29,7 @@ const usage = `cross-session-codex — local Claude/Codex messaging
   release ID... | decline ID...    Decide held messages
   wait [--timeout 20] | sent       Wait for messages or inspect sent status
   version                         Print runtime/build versions
+  capabilities                    Describe the versioned companion CLI contract
   mcp | hook                      Optional host integration
 
 Stateful commands accept --thread UUID (defaults to CODEX_THREAD_ID).
@@ -96,6 +97,12 @@ func runCLI(args []string, in io.Reader, out, errOut io.Writer) (Object, error) 
 	args = args[1:]
 	if command == "version" {
 		return Object{"name": "cross-session-codex", "version": Version, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH}, nil
+	}
+	if command == "capabilities" {
+		if len(args) != 0 {
+			return nil, errors.New("capabilities takes no arguments")
+		}
+		return Object{"name": "cross-session-codex", "version": Version, "cli_api": 1, "features": []string{"launch-handshake-v1"}}, nil
 	}
 	if command == "worker" {
 		if len(args) != 1 {
@@ -168,11 +175,22 @@ func runCLI(args []string, in io.Reader, out, errOut io.Writer) (Object, error) 
 		fs.StringVar(&opts.Socket, "app-server-socket", "", "Explicit existing app-server Unix socket")
 		fs.StringVar(&opts.CWD, "cwd", "", "Project directory")
 		fs.StringVar(&opts.Codex, "codex", "codex", "Codex executable")
+		fs.IntVar(&opts.ReadyFD, "ready-fd", -1, "Optional inherited ready pipe write descriptor (requires --continue-fd)")
+		fs.IntVar(&opts.ContinueFD, "continue-fd", -1, "Optional inherited continue pipe read descriptor (requires --ready-fd)")
 		if err := parseFlags(fs, args); err != nil {
 			return nil, err
 		}
 		if fs.NArg() != 0 {
 			return nil, errors.New("unexpected launch arguments; Codex client options go after --")
+		}
+		handoffRequested := false
+		fs.Visit(func(f *flag.Flag) {
+			if f.Name == "ready-fd" || f.Name == "continue-fd" {
+				handoffRequested = true
+			}
+		})
+		if handoffRequested && (opts.ReadyFD < 3 || opts.ContinueFD < 3) {
+			return nil, errors.New("--ready-fd and --continue-fd must both be supplied with pipe descriptors at least 3")
 		}
 		return nil, Launch(opts)
 	}

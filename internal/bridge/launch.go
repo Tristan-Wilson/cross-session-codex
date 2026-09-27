@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -15,11 +16,21 @@ import (
 type LaunchOptions struct {
 	Resume, Name, Inbound, Permission, Socket, CWD, Codex string
 	ClientArgs                                            []string
+	ReadyFD, ContinueFD                                   int // -1 disables the optional handoff.
 }
 
 func Launch(opts LaunchOptions) error {
 	if os.Getenv("CODEX_THREAD_ID") != "" {
 		return errors.New("launch must run in your terminal after exiting Codex, not as a command inside an active Codex session")
+	}
+	handoff, err := newLaunchHandshake(opts.ReadyFD, opts.ContinueFD)
+	if err != nil {
+		return err
+	}
+	launchCtx := context.Background()
+	stopSignals := func() {}
+	if handoff != nil {
+		defer closeQuietly(handoff)
 	}
 	if opts.Codex == "" {
 		opts.Codex = "codex"
@@ -71,7 +82,7 @@ func Launch(opts LaunchOptions) error {
 			return err
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(launchCtx, 30*time.Second)
 	defer cancel()
 	lock, err := lockAppServer(ctx, opts.Socket)
 	if err != nil {
@@ -150,19 +161,51 @@ func Launch(opts LaunchOptions) error {
 	if err != nil {
 		return err
 	}
+	// Successful exec never returns; any return after registration must remove
+	// this provisional peer while preserving its durable thread and inbox.
+	defer func() { _ = Stop(thread) }()
+	if handoff != nil {
+		// Preparation includes older blocking worker locks. Preserve normal
+		// signal termination there; only the bounded handoff consumes signals.
+		// Restore defaults before deferred worker cleanup, which may also wait
+		// on a lock. Owner verification cleans up after an interrupted process.
+		launchCtx, stopSignals = signal.NotifyContext(launchCtx, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+		defer stopSignals()
+	}
 	_, _ = fmt.Fprintf(os.Stderr, "Cross Session Codex: %s (thread %s)\n", str(state, "name"), thread)
 	client.Close()
 	cancel()
+	if handoff != nil {
+		codexHome, err := filepath.Abs(envOr("CODEX_HOME", filepath.Join(home(), ".codex")))
+		if err != nil {
+			return err
+		}
+		socket, err := filepath.Abs(opts.Socket)
+		if err != nil {
+			return err
+		}
+		handoffCtx, cancelHandoff := context.WithTimeout(launchCtx, 30*time.Second)
+		err = handoff.Exchange(handoffCtx, LaunchReady{
+			ThreadID: thread, CodexHome: codexHome, AppServerSocket: socket,
+			OwnerPID: os.Getpid(), OwnerStart: start, Name: str(state, "name"), Version: Version,
+		})
+		cancelHandoff()
+		if err != nil {
+			return fmt.Errorf("launch handoff: %w", err)
+		}
+		if err = launchCtx.Err(); err != nil {
+			return fmt.Errorf("launch handoff canceled before exec: %w", err)
+		}
+	}
 	if err = os.Chdir(opts.CWD); err != nil {
-		_ = Stop(thread)
 		return err
 	}
 	args := []string{codex, "--remote", "unix://" + opts.Socket, "resume", thread}
 	args = append(args, opts.ClientArgs...)
 	// Retain this PID across exec. The worker's host lease then ends when this
 	// TUI exits, without a second supervisor or terminal automation process.
+	stopSignals()
 	if err = syscall.Exec(codex, args, os.Environ()); err != nil {
-		_ = Stop(thread)
 		return err
 	}
 	return nil
