@@ -76,6 +76,14 @@ Startup is serialized across launchers, and the server stays running when a UI
 exits. Its output is logged to
 `$CODEX_HOME/app-server-control/cross-session-codex.log` (under `~/.codex` by default).
 
+An optional [versioned launch handoff](docs/LAUNCH_HANDSHAKE.md) lets a local
+operator's companion launcher prepare another service for the exact thread
+before the UI opens. `capabilities` advertises this integration; inherited
+`--ready-fd` / `--continue-fd` pipes keep the same live client owner through
+`exec`. Ordinary launches need neither flag. The bridge remains independently
+usable without Botbus, Telegram, or MCP. The handoff does not alter the chosen
+Codex home's existing plugins or make that profile local-only.
+
 After exiting all Codex sessions, stop the shared server from your terminal:
 
 ```sh
