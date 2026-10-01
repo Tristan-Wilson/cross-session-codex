@@ -44,6 +44,7 @@ type Worker struct {
 	client                                       *appClient
 	attached                                     bool
 	lastReconcile                                time.Time
+	ownerUnverified                              bool // Accessed only by maintenance.
 	artifactMu                                   sync.Mutex
 	artifacts                                    map[string]os.FileInfo
 	statusQueue                                  chan statusRequest
@@ -472,9 +473,22 @@ func (w *Worker) maintenance() error {
 		return nil
 	}
 	if err := cfg.checkHost(); err != nil {
+		if errors.Is(err, errHostUnverified) {
+			// Keep the inbox and registration available while retrying on the
+			// next maintenance pass. Do not deliver into an unverified owner.
+			w.ownerUnverified = true
+			w.setActivity("unknown", err.Error())
+			return errors.Join(err, w.store.SetMeta("delivery_error", err.Error()), w.publish())
+		}
 		logEvent("client_owner_gone", err)
 		w.cancel()
 		return nil
+	}
+	if w.ownerUnverified {
+		if err := w.store.SetMeta("delivery_error", nil); err != nil {
+			return err
+		}
+		w.ownerUnverified = false
 	}
 	old, err := w.store.Expire()
 	if err != nil {

@@ -1,6 +1,6 @@
 {
   "name": "cross-session-codex",
-  "version": "0.1.0+codex.20260904132043",
+  "version": "0.1.3",
   "description": "Exchange local messages between Codex threads and Claude Code sessions using Claude's peer protocol.",
   "author": {
     "name": "Local developer"
