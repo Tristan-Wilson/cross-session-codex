@@ -10,7 +10,7 @@ to Cross Session Codex. Ordinary `launch` remains unchanged.
 `cross-session-codex capabilities` is a side-effect-free JSON command:
 
 ```json
-{"name":"cross-session-codex","version":"0.2.0-dev","cli_api":1,"features":["launch-handshake-v1"]}
+{"name":"cross-session-codex","version":"0.1.3","cli_api":1,"features":["launch-handshake-v1"]}
 ```
 
 Consumers must check the executable name, `cli_api`, and required feature rather
@@ -49,7 +49,7 @@ the child emits one newline-terminated JSON object, at most 8192 bytes including
 the newline:
 
 ```json
-{"v":1,"event":"ready","nonce":"random-per-launch","thread_id":"exact-uuid","codex_home":"/absolute/home","app_server_socket":"/absolute/socket","owner_pid":1234,"owner_start":"process-start-identity","name":"desk-gateway","version":"0.2.0-dev"}
+{"v":1,"event":"ready","nonce":"random-per-launch","thread_id":"exact-uuid","codex_home":"/absolute/home","app_server_socket":"/absolute/socket","owner_pid":1234,"owner_start":"process-start-identity","name":"desk-gateway","version":"0.1.3"}
 ```
 
 Paths identify the selected environment; no credentials are included. The

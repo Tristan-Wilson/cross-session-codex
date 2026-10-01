@@ -37,7 +37,7 @@ const (
 	escapedClosingTag = `<\/cross-session-message>`
 )
 
-var Version = "0.2.0-dev"
+var Version = "0.1.3"
 
 type Object = map[string]any
 
