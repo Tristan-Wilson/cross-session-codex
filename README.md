@@ -247,7 +247,13 @@ The bridge never grants app-server approval requests on the user's behalf.
 
 A thread using automatic delivery is tied to its launcher's Codex client PID
 and process start time. Restarting a worker preserves that owner; it unregisters
-when the client exits or its identity can no longer be verified. Hooks only
+when the client is confirmed gone or its PID has been reused. If a process check
+fails without establishing an exit, the worker retains its registration and
+inbox, reports unknown activity and a delivery error, and pauses automatic
+delivery until a later check verifies the owner. Maintenance retries every two
+seconds. Starting a worker still requires a verified owner. If a live client's
+worker has stopped, use `start --thread UUID` to restore its saved registration.
+Hooks only
 update existing workers and never create an unowned registration. Explicit
 manual-delivery workers have a 24-hour inactivity lease. Before switching
 conversations, disable messaging for the old thread and exit its UI. Use `launch`

@@ -9,6 +9,13 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+// A failed observation does not establish that a previously verified owner has
+// exited. Callers establishing ownership must still reject an unknown result.
+var (
+	errHostUnverified = errors.New("codex client owner could not be verified")
+	errOwnerGone      = errors.New("codex client owner has exited")
+)
+
 // A shared app-server is not a window's owner. Only launch can supply the
 // client PID whose lifetime should control automatic message delivery.
 func (c Config) checkHost() error {
@@ -20,10 +27,13 @@ func (c Config) checkHost() error {
 	}
 	start, err := processStart(c.HostPID)
 	if err != nil {
-		return fmt.Errorf("codex client owner is unavailable: %w; use launch --resume %s", err, c.Thread)
+		if errors.Is(unix.Kill(c.HostPID, 0), unix.ESRCH) {
+			return fmt.Errorf("%w (PID %d); use launch --resume %s", errOwnerGone, c.HostPID, c.Thread)
+		}
+		return fmt.Errorf("%w: %v; retry the check", errHostUnverified, err)
 	}
 	if start != c.HostStart {
-		return fmt.Errorf("codex client owner has exited (PID %d was reused); use launch --resume %s", c.HostPID, c.Thread)
+		return fmt.Errorf("%w (PID %d was reused); use launch --resume %s", errOwnerGone, c.HostPID, c.Thread)
 	}
 	return nil
 }
