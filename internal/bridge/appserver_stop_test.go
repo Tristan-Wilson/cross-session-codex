@@ -3,19 +3,29 @@ package bridge
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
 	"golang.org/x/sys/unix"
 )
 
 func shutdownFixture(t *testing.T) (string, string, *appClient) {
+	t.Helper()
+	return shutdownFixtureWithProcess(t, "TestAppServerLaunchProcess")
+}
+
+func shutdownFixtureWithProcess(t *testing.T, processTest string) (string, string, *appClient) {
 	t.Helper()
 	dir := isolatedState(t)
 	t.Setenv("CODEX_HOME", filepath.Join(dir, "codex"))
@@ -25,7 +35,7 @@ func shutdownFixture(t *testing.T) (string, string, *appClient) {
 	exe, err := os.Executable()
 	must(t, err)
 	script := "#!/bin/sh\nprintf '%s\\n' \"$$\" > " + shellQuote(pidPath) + "\n" +
-		"export CSC_TEST_APP_SOCKET=\"${3#unix://}\"\nexec " + shellQuote(exe) + " '-test.run=^TestAppServerLaunchProcess$'\n"
+		"export CSC_TEST_APP_SOCKET=\"${3#unix://}\"\nexec " + shellQuote(exe) + " " + shellQuote("-test.run=^"+processTest+"$") + "\n"
 	must(t, os.WriteFile(codex, []byte(script), 0700))
 	t.Cleanup(func() { stopAppServerFixture(t, pidPath) })
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -37,6 +47,11 @@ func shutdownFixture(t *testing.T) (string, string, *appClient) {
 }
 
 func TestShutdownRefusesConnectionsThenStopsAndRestarts(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		bin := testDir(t)
+		must(t, os.WriteFile(filepath.Join(bin, "lsof"), []byte("#!/bin/sh\necho 'unexpected lsof invocation' >&2\nexit 99\n"), 0700))
+		t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	}
 	socket, codex, client := shutdownFixture(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
@@ -72,6 +87,63 @@ func TestShutdownRefusesConnectionsThenStopsAndRestarts(t *testing.T) {
 	must(t, err)
 	if str(info, "status") != "stopped" {
 		t.Fatalf("restarted server could not stop: %v", info)
+	}
+}
+
+func TestShutdownDroppedInspectionProcess(t *testing.T) {
+	socket := os.Getenv("CSC_TEST_APP_SOCKET")
+	if socket == "" {
+		t.Skip("dropped inspection subprocess fixture")
+	}
+	listener, err := net.Listen("unix", socket)
+	must(t, err)
+	must(t, os.Chmod(socket, 0600))
+	defer closeQuietly(listener)
+	server := &http.Server{ReadHeaderTimeout: time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer func() { _ = conn.CloseNow() }()
+		for {
+			_, data, err := conn.Read(r.Context())
+			if err != nil {
+				return
+			}
+			var req struct {
+				ID     json.RawMessage
+				Method string
+			}
+			if json.Unmarshal(data, &req) != nil || len(req.ID) == 0 {
+				continue
+			}
+			result := Object{}
+			if req.Method == "thread/loaded/list" {
+				result["data"] = []string{}
+			}
+			if conn.Write(r.Context(), websocket.MessageText, compact(Object{"id": req.ID, "result": result})) != nil {
+				return
+			}
+			if req.Method == "thread/loaded/list" {
+				return // Leave other initialized clients connected.
+			}
+		}
+	})}
+	must(t, server.Serve(listener))
+}
+
+func TestShutdownRefusesDroppedInspectionConnection(t *testing.T) {
+	socket, _, external := shutdownFixtureWithProcess(t, "TestShutdownDroppedInspectionProcess")
+	for _, check := range []bool{true, false} {
+		result, err := Shutdown(context.Background(), socket, check)
+		if err == nil {
+			t.Fatalf("disconnected probe accepted as idle: check=%t result=%v", check, result)
+		}
+		if external.Closed() {
+			t.Fatal("refused shutdown closed the external client")
+		}
+		var response Object
+		must(t, external.call(context.Background(), "initialize", Object{}, &response))
 	}
 }
 
@@ -230,7 +302,7 @@ func TestCountAppConnections(t *testing.T) {
 func TestShutdownRefusesMissingConnectionInspector(t *testing.T) {
 	// Check the real exec boundary, not a fabricated zero-client result.
 	t.Setenv("PATH", testDir(t))
-	_, err := appServerConnections(context.Background(), os.Getpid(), "/tmp/app.sock")
+	_, err := lsofAppServerConnections(context.Background(), os.Getpid(), "/tmp/app.sock")
 	if err == nil || !strings.Contains(err.Error(), "requires lsof") {
 		t.Fatalf("missing inspector did not fail closed: %v", err)
 	}

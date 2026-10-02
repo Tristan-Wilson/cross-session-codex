@@ -182,9 +182,12 @@ server process and sends `SIGTERM`, waits for exit, and never escalates to a for
 kill. Already-stopped servers are a successful no-op; the next `launch` starts
 the server again. Saved conversations and inboxes are retained.
 
-Shutdown uses `lsof` to check socket connections (included on macOS; install your
-distribution's `lsof` package on Linux). It supports servers started by older
-bridge versions. For a different socket, pass `--app-server-socket /absolute/path`.
+On Linux, shutdown checks the server's file descriptors and network-namespace
+socket tables through `/proc`; `lsof` is not required. Unreadable, incomplete,
+or changing inspection data causes shutdown to refuse rather than assume the
+server is idle. On macOS, shutdown uses `lsof` (included with the OS).
+It supports servers started by older bridge versions. For a different socket,
+pass `--app-server-socket /absolute/path`.
 Launch and shutdown share a lock; close external clients before shutting down.
 
 Omit `--name` for `codex-<project>-<thread-prefix>`. New peers default to
