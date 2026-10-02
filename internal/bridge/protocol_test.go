@@ -120,11 +120,19 @@ func TestVerifiedUnixCredentials(t *testing.T) {
 	must(t, os.Chmod(path, 0600))
 	start, err := processStart(os.Getpid())
 	must(t, err)
-	done := make(chan error, 1)
+	checked := make(chan error, 1)
+	release := make(chan struct{})
+	done := make(chan struct{})
+	defer func() {
+		close(release)
+		closeQuietly(listener) // Also unblock AcceptUnix if client setup failed.
+		<-done
+	}()
 	go func() {
+		defer close(done)
 		c, e := listener.AcceptUnix()
 		if e != nil {
-			done <- e
+			checked <- e
 			return
 		}
 		defer closeQuietly(c)
@@ -132,12 +140,16 @@ func TestVerifiedUnixCredentials(t *testing.T) {
 		if e == nil && (p != os.Getpid() || u != os.Getuid()) {
 			e = os.ErrPermission
 		}
-		done <- e
+		checked <- e
+		// Darwin needs the peer to remain connected while credentials are read.
+		// Keep both endpoints open until both sides have finished verification.
+		<-release
 	}()
 	c, err := connectVerified(path, os.Getpid(), start, time.Second)
 	must(t, err)
+	defer closeQuietly(c)
+	must(t, <-checked)
 	closeQuietly(c)
-	must(t, <-done)
 	if _, err = connectVerified(path, os.Getpid(), "stale", time.Second); err == nil {
 		t.Fatal("stale identity accepted")
 	}
