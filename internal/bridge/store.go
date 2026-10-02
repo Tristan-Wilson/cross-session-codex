@@ -497,7 +497,7 @@ func (s *Store) Correlate(frame Object, pid int, start string) error {
 		if err = json.Unmarshal([]byte(raw), &target); err != nil {
 			return err
 		}
-		if target.PID == pid && target.Start == start {
+		if peerReceiptMatches(target, pid, start) {
 			// An acknowledgement is terminal. Acceptance may arrive after a
 			// later receipt because status frames use separate connections.
 			if current == "read" {

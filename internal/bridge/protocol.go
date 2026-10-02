@@ -17,6 +17,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -266,6 +267,10 @@ func peerCredentials(conn *net.UnixConn) (pid, uid int, err error) {
 	return
 }
 func connectVerified(path string, pid int, start string, timeout time.Duration) (*net.UnixConn, error) {
+	return connectVerifiedPeer(path, pid, start, runtime.GOOS, timeout)
+}
+
+func connectVerifiedPeer(path string, pid int, start, domain string, timeout time.Duration) (*net.UnixConn, error) {
 	if err := vetParents(filepath.Dir(path)); err != nil {
 		return nil, err
 	}
@@ -276,12 +281,8 @@ func connectVerified(path string, pid int, start string, timeout time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	actual, err := processStart(pid)
-	if err != nil {
+	if err = verifyPeerIdentity(pid, start, domain); err != nil {
 		return nil, err
-	}
-	if actual != start {
-		return nil, errors.New("stale process identity")
 	}
 	c, err := net.DialTimeout("unix", path, timeout)
 	if err != nil {
@@ -305,11 +306,10 @@ func connectVerified(path string, pid int, start string, timeout time.Duration) 
 	if err != nil {
 		return nil, err
 	}
-	actual, err = processStart(p)
-	if err != nil {
+	if err = verifyPeerIdentity(p, start, domain); err != nil {
 		return nil, err
 	}
-	if u != os.Getuid() || p != pid || actual != start || !os.SameFile(before, after) {
+	if u != os.Getuid() || p != pid || !os.SameFile(before, after) {
 		return nil, errors.New("connected endpoint identity mismatch")
 	}
 	valid = true
@@ -365,8 +365,7 @@ func Discover(registry string, exclude int) ([]Peer, error) {
 		if readJSON(filepath.Join(registry, e.Name()), false, &p) != nil || strconv.Itoa(p.PID)+".json" != e.Name() || p.PID == exclude || p.Protocol != 1 || p.Name == "" {
 			continue
 		}
-		start, err := processStart(p.PID)
-		if err != nil || start != p.Start {
+		if verifyPeerIdentity(p.PID, p.Start, p.Domain) != nil {
 			continue
 		}
 		if p.HostPID > 0 {
@@ -472,7 +471,7 @@ func replyTarget(address, registry string) (Peer, error) {
 	}
 	peer := Peer{PID: pid, Start: key.Start, Domain: key.Domain, Socket: path}
 	var advertised Peer
-	if readJSON(filepath.Join(registry, strconv.Itoa(pid)+".json"), false, &advertised) == nil && advertised.PID == pid && advertised.Start == key.Start && advertised.Socket == path {
+	if readJSON(filepath.Join(registry, strconv.Itoa(pid)+".json"), false, &advertised) == nil && advertised.PID == pid && advertised.Start == key.Start && advertised.Domain == key.Domain && advertised.Socket == path {
 		peer.Features = advertised.Features
 	}
 	return peer, nil
@@ -493,7 +492,7 @@ func sendFrame(target Peer, frame Object, registry string) error {
 	if len(payload) > MaxBuffer {
 		return errors.New("serialized payload exceeds the buffer cap")
 	}
-	conn, err := connectVerified(path, target.PID, target.Start, 3*time.Second)
+	conn, err := connectVerifiedPeer(path, target.PID, target.Start, target.Domain, 3*time.Second)
 	if err != nil {
 		return err
 	}

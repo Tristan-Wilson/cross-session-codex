@@ -71,6 +71,9 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err = verifyInspectionConnection(ctx, client); err != nil {
+		return nil, err
+	}
 	result["pid"], result["sessions"], result["active_threads"], result["connections"] = identity.PID, owners, active, connections
 	result["status"] = "ready"
 	if len(owners) != 0 || len(active) != 0 || connections != 0 {
@@ -87,7 +90,11 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	// signal. Cooperating launchers cannot attach while we hold the startup lock.
 	if connections, err = appServerConnections(ctx, identity.PID, client.socket.target); err != nil {
 		return nil, err
-	} else if connections != 0 {
+	}
+	if err = verifyInspectionConnection(ctx, client); err != nil {
+		return nil, err
+	}
+	if connections != 0 {
 		return nil, errors.New("a client connected during shutdown; close all sessions and retry")
 	}
 	start, err := processStart(identity.PID)
@@ -100,6 +107,9 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 	}
 	if err = ctx.Err(); err != nil {
 		return nil, err
+	}
+	if client.Closed() {
+		return nil, errors.New("inspection connection closed before shutdown; nothing was stopped")
 	}
 	if err = unix.Kill(identity.PID, unix.SIGTERM); err != nil {
 		return nil, fmt.Errorf("signal app-server: %w", err)
@@ -121,6 +131,22 @@ func Shutdown(ctx context.Context, socket string, check bool) (Object, error) {
 			}
 		}
 	}
+}
+
+// The inventory subtracts our initialized connection. Prove this same stream
+// survived the inventory: otherwise a remaining external client could be
+// mistaken for the probe. appClient never reconnects a failed stream.
+func verifyInspectionConnection(ctx context.Context, client *appClient) error {
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	var response struct{ Data []string }
+	if err := client.call(ctx, "thread/loaded/list", Object{"limit": 1}, &response); err != nil {
+		return fmt.Errorf("cannot verify inspection connection remains live: %w; nothing was stopped", err)
+	}
+	if response.Data == nil || client.Closed() {
+		return errors.New("inspection connection returned incomplete evidence or closed; nothing was stopped")
+	}
+	return nil
 }
 
 func checkStoppedAppServerRecord(socket string) error {
@@ -270,7 +296,7 @@ func activeAppThreads(ctx context.Context, client *appClient) ([]string, error) 
 // Accepted Unix sockets retain the listener's pathname on both supported OSes.
 // Counting them catches clients that have no messaging registration. The open,
 // initialized inspection connection and listener account for two descriptors.
-func appServerConnections(ctx context.Context, pid int, socket string) (int, error) {
+func lsofAppServerConnections(ctx context.Context, pid int, socket string) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "lsof", "-nP", "-a", "-p", strconv.Itoa(pid), "-U", "-F0pftn")

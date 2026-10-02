@@ -14,9 +14,14 @@ Coverage includes:
 - Shared-server shutdown: live and disabled-messaging owners, unregistered socket
   clients, active background threads, process identity mismatches, launch locking,
   graceful stop/restart, repeated shutdown, and refusal to force-kill on timeout.
+- Linux connection inspection without `lsof`: socket-inode deduplication,
+  namespace-scoped inventory, unrelated sockets, and refusal on incomplete or
+  changing evidence.
 
 - Unicode and closing-tag round trips, byte/UTF-16 limits, bounded framing,
   unsafe paths, symlinks, and kernel-verified Unix socket credentials.
+- Native Linux peer process-start ticks and machine/PID-namespace domains,
+  legacy timestamp identities, and rejection of stale or mismatched identities.
 - Durable IDs, persisted-schema compatibility, repeated reads, byte-bounded pages,
   cursors, deduplication, rate limits, queue bounds, expiry, and correlated statuses.
 - Concurrent acceptance and acknowledgement, partial acknowledgement, races
