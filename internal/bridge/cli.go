@@ -96,7 +96,11 @@ func runCLI(args []string, in io.Reader, out, errOut io.Writer) (Object, error) 
 	command := args[0]
 	args = args[1:]
 	if command == "version" {
-		return Object{"name": "cross-session-codex", "version": Version, "go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH}, nil
+		return Object{
+			"name": "cross-session-codex", "version": Version,
+			"commit": BuildCommit, "build_date": BuildDate,
+			"go": runtime.Version(), "os": runtime.GOOS, "arch": runtime.GOARCH,
+		}, nil
 	}
 	if command == "capabilities" {
 		if len(args) != 0 {

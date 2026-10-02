@@ -2,7 +2,9 @@ name: Go
 
 on:
   push:
+    branches: ["**"] # Version tags run these same checks through release.yml.
   pull_request:
+  workflow_call:
 
 permissions:
   contents: read
@@ -16,10 +18,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.1"
           cache: true
@@ -38,11 +40,59 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: "1.27.1"
           cache: true
       - run: make cross-build
+
+  package-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.1"
+          cache: true
+      - name: Build and verify a non-release snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          go run ./cmd/csc-release --snapshot --out dist/snapshot
+          cd dist/snapshot
+          sha256sum --check --strict SHA256SUMS
+          jq -e --arg commit "$(git rev-parse HEAD)" '
+            .schema_version == 1 and .project == "cross-session-codex" and
+            .release == false and .source_dirty == false and
+            .source_commit == $commit and (.tag == null) and
+            ([.targets[] | .os + "/" + .arch] | sort) ==
+              ["darwin/amd64", "darwin/arm64", "linux/amd64", "linux/arm64"]
+          ' release.json
+          jq -r '.targets[] | .archive_sha256 + "  " + .archive' release.json |
+            sha256sum --check --strict -
+          version="$(jq -r .version release.json)"
+          smoke_dir="$(mktemp -d)"
+          tar -xzf "cross-session-codex_${version}_linux_amd64.tar.gz" -C "$smoke_dir"
+          "$smoke_dir/cross-session-codex" version | jq -e \
+            --arg version "$version" --arg commit "$(git rev-parse HEAD)" \
+            --slurpfile manifest release.json '
+              .name == "cross-session-codex" and .version == $version and
+              .commit == $commit and .os == "linux" and .arch == "amd64" and
+              .build_date == $manifest[0].build_date and .go == $manifest[0].go_version
+            '
+          "$smoke_dir/cross-session-codex" capabilities | jq -e --arg version "$version" '
+            .name == "cross-session-codex" and .version == $version and .cli_api == 1 and
+            (.features | index("launch-handshake-v1") != null)
+          '
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: snapshot-packages
+          path: dist/snapshot/*
+          if-no-files-found: error
+          retention-days: 7

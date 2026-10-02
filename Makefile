@@ -2,11 +2,15 @@ GO ?= go
 export GOTOOLCHAIN := go1.27.1
 LINT_VERSION := v2.13.2
 LINT := $(GO) run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(LINT_VERSION)
+RELEASE_TOOL := $(GO) run ./cmd/csc-release
+RELEASE_DIR ?= dist/release
+SNAPSHOT_DIR ?= dist/snapshot
+export TAG RELEASE_DIR SNAPSHOT_DIR
 
-.PHONY: build install fmt fmt-check vet lint test check cross-build
+.PHONY: build install fmt fmt-check vet lint test check cross-build release release-snapshot
 
 build:
-	CGO_ENABLED=0 $(GO) build -trimpath -o dist/cross-session-codex ./cmd/cross-session-codex
+	$(RELEASE_TOOL) --build --out dist/cross-session-codex
 
 install: build
 	./dist/cross-session-codex install
@@ -29,7 +33,11 @@ test:
 check: fmt-check vet lint test
 
 cross-build:
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -o dist/cross-session-codex-darwin-arm64 ./cmd/cross-session-codex
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -o dist/cross-session-codex-darwin-amd64 ./cmd/cross-session-codex
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build -trimpath -o dist/cross-session-codex-linux-arm64 ./cmd/cross-session-codex
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build -trimpath -o dist/cross-session-codex-linux-amd64 ./cmd/cross-session-codex
+	$(RELEASE_TOOL) --cross-build --out dist
+
+# Package only; neither target uploads, installs, or modifies Git tags.
+release:
+	$(RELEASE_TOOL) --tag "$$TAG" --out "$$RELEASE_DIR"
+
+release-snapshot:
+	$(RELEASE_TOOL) --snapshot --out "$$SNAPSHOT_DIR"
