@@ -12,7 +12,9 @@ Not covered: the agent-team mailbox (a separate file-based transport under
 
 Measured against **Claude Code 2.1.259 and 2.1.260 on macOS (darwin, arm64)** by
 registering a fake peer, logging every byte real sessions wrote to it, and replaying
-crafted frames into a real session's inbox. Every claim is tagged:
+crafted frames into a real session's inbox. The Linux process-identity format was
+also checked against **Claude Code 2.1.283** using registry and kernel process
+metadata; those additions are marked explicitly below. Every claim is tagged:
 
 - **[OBS]** directly observed on the wire or on disk in this environment.
 - **[BIN]** read out of the Claude Code binary's string/schema tables.
@@ -51,7 +53,8 @@ parses, but do not grep for `"name": "x"` with a space — that fails against re
 |---|---|
 | `pid` | identity anchor; must equal the filename stem |
 | `sessionId` | conversation id. **Not** the team id, and can lag: observed stale for ~minutes after start on one session, and unequal to the team's `leadSessionId` after `--resume` |
-| `procStart` | **`ps -o lstart=` rendered in UTC**, byte-exact. Verified against test peers. This is the pid-reuse guard |
+| `procStart` | Platform-specific PID-reuse guard: UTC `ps -o lstart=` text on observed macOS peers; decimal `/proc/<pid>/stat` field 22 on observed native Linux peers. See below |
+| `pidDomain` | `darwin` for observed macOS peers; `linux:<machine-id>:pid:[<namespace-inode>]` for observed native Linux peers |
 | `peerProtocol` | `1` in every session seen |
 | `peerFeatures` | capability list; gate optional frames on it |
 | `kind` | `interactive` observed, including for a `claude -p` run |
@@ -60,9 +63,30 @@ parses, but do not grep for `"name": "x"` with a space — that fails against re
 
 Writers must keep `status`/`updatedAt` current; readers must not assume freshness.
 
+**Native Linux identity [OBS, Claude Code 2.1.283].** `procStart` is the canonical
+decimal kernel start-tick counter from `/proc/<pid>/stat` field 22, not a wall-clock
+timestamp. The domain combines `/etc/machine-id` and the process's PID namespace
+link. For example, these values are synthetic:
+
+```json
+{"procStart":"123456789","pidDomain":"linux:0123456789abcdef0123456789abcdef:pid:[123456]"}
+```
+
+Verify the domain against the local machine ID and both the caller's and target's
+PID namespaces before comparing start ticks. Parse the stat record after the last
+`)` terminating its command name; command names can contain spaces or parentheses.
+Malformed, unreadable, foreign-domain, dead/zombie, or stale process evidence must
+fail closed. Do not translate ticks into approximate timestamps or fall back to a
+PID-only comparison.
+
+Cross Session Codex retains its existing UTC-`ps` start strings with plain
+`linux`/`darwin` domains for its own advertisements and persisted worker/client
+ownership. Its peer verifier accepts the native Linux format in addition to this
+legacy format. This does not migrate saved owner records or relax their checks.
+
 ### 1.2 Key file — `~/.claude/sessions/<pid>.<sha256(socketPath)>.key` [OBS]
 
-Mode `0600`. Compact JSON, 108 bytes in practice:
+Mode `0600`. Compact JSON; the observed macOS example uses this shape:
 
 ```json
 {"peerToken":"00000000000000000000000000000000","procStart":"Sat Jan  1 00:00:00 2000","pidDomain":"darwin"}
@@ -115,9 +139,11 @@ Their parent process is the tmux server, not the spawning session.
 
 1. List `~/.claude/sessions/*.json`.
 2. Parse each. Skip malformed.
-3. Liveness: the pid must exist **and** its live `ps -o lstart=` (UTC) must equal the
-   advertised `procStart`. A pid match with a `procStart` mismatch is a **recycled pid** and
-   must be treated as dead — the error surface names this case explicitly. [DOC]
+3. Liveness: the PID must exist and its live start identity must exactly match the
+   advertised `procStart` in the domain's format: UTC `ps` text for the legacy
+   format, or kernel start ticks plus matching machine/PID namespace for native
+   Linux (§1.1). A PID match with a start mismatch is stale identity, not permission
+   to reconnect to a replacement process. [OBS] [DOC]
 4. Exclude self. Addressing your own name is refused. [DOC]
 5. The **`name` is the address.** When several live sessions share a name, disambiguate with
    a short opaque ref shown per listing; refs are not durable and must not be persisted. [OBS]
@@ -417,7 +443,9 @@ A peer that Claude Code sessions can discover and message must:
       `pid`, `sessionId`, `cwd`, `startedAt`, `procStart`, `version`, `peerProtocol`,
       `peerFeatures`, `kind`, `entrypoint`, `pidDomain`, `messagingSocketPath`, `name`,
       `nameSource`, `status`.
-- [ ] Derive `procStart` from `ps -o lstart=` in **UTC**, byte-exact.
+- [ ] Verify `procStart` with its matching domain/format: byte-exact UTC `ps` text
+      for legacy peers, or canonical kernel start ticks and matching machine/PID
+      namespace for native Linux peers (§1.1).
 - [ ] Write `~/.claude/sessions/<pid>.<sha256(socketPath)>.key`, mode `0600`, containing a
       32-hex `peerToken`, the same `procStart`, and `pidDomain`.
 - [ ] Bind `<dir>/cc-socks/<pid>.sock`, chmod `0600`, in an accepted directory.
