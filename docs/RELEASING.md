@@ -5,21 +5,22 @@ publishing a GitHub release. Building archives does none of those things. Creati
 or pushing a tag and publishing artifacts are separate operator-authorized
 actions.
 
-The existing v0.1.2 release is source-only and its runtime reports `0.2.0-dev`.
-Keep that tag and release intact. This workflow applies to a new release tag
-after the packaging changes are merged; v0.1.3 is a possible next version, not a
-claim that its assets already exist.
+The existing v0.1.2 and v0.1.3 releases are source-only. Their runtimes report
+`0.2.0-dev` and `0.1.3`, respectively, without commit/date stamping. Keep both
+tags and releases intact. The first intended packaged release is v0.1.4, after
+the packaging changes are merged. Check the published assets rather than assuming
+that an intended tag already has binaries.
 
 ## Artifact contract
 
 A release produces four archives, using the full version including its leading
-`v`. For an illustrative v0.1.3 release they are:
+`v`. For a v0.1.4 release they are:
 
 ```text
-cross-session-codex_v0.1.3_linux_amd64.tar.gz
-cross-session-codex_v0.1.3_linux_arm64.tar.gz
-cross-session-codex_v0.1.3_darwin_amd64.tar.gz
-cross-session-codex_v0.1.3_darwin_arm64.tar.gz
+cross-session-codex_v0.1.4_linux_amd64.tar.gz
+cross-session-codex_v0.1.4_linux_arm64.tar.gz
+cross-session-codex_v0.1.4_darwin_amd64.tar.gz
+cross-session-codex_v0.1.4_darwin_arm64.tar.gz
 release.json
 SHA256SUMS
 ```
@@ -150,9 +151,10 @@ Cross-compiled binaries can only be executed on compatible hosts.
 
 The release workflow runs for a new supported `v`-prefixed semantic-version tag.
 Only create and push that tag after the intended source has been reviewed and
-merged, and publishing has been explicitly authorized. Do not move v0.1.2 or
-retroactively treat its source-only release as an artifact produced by this
-workflow.
+merged, and publishing has been explicitly authorized. Keep the optional
+`.codex-plugin/plugin.json` version aligned with the intended release in that
+reviewed source. Do not move v0.1.2 or v0.1.3 or retroactively treat their
+source-only releases as artifacts produced by this workflow.
 
 The workflow separates permissions and phases:
 

@@ -19,6 +19,34 @@ type LaunchOptions struct {
 	ReadyFD, ContinueFD                                   int // -1 disables the optional handoff.
 }
 
+// A thread's saved Codex client owner stays authoritative after its messaging
+// worker has stopped. Only a definitive owner exit lets launch claim the
+// thread. An unverifiable owner is refused too, so a slow or failing ps can
+// never produce a second Codex client on the same thread.
+func refuseLiveOwner(thread string) error {
+	dir, err := threadDir(thread)
+	if err != nil {
+		return err
+	}
+	var existing Config
+	if err = readJSON(filepath.Join(dir, "config.json"), true, &existing); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	if existing.HostPID <= 0 {
+		return nil
+	}
+	err = existing.checkHost()
+	switch {
+	case err == nil:
+		return fmt.Errorf("this thread already belongs to Codex client PID %d; exit its existing UI before resuming, or run cross-session-codex start --thread %s to restart its messaging worker", existing.HostPID, thread)
+	case errors.Is(err, errOwnerGone):
+		return nil
+	}
+	return fmt.Errorf("cannot verify whether Codex client PID %d still owns this thread: %w; retry, or exit that client first", existing.HostPID, err)
+}
+
 func Launch(opts LaunchOptions) error {
 	if os.Getenv("CODEX_THREAD_ID") != "" {
 		return errors.New("launch must run in your terminal after exiting Codex, not as a command inside an active Codex session")
@@ -74,6 +102,11 @@ func Launch(opts LaunchOptions) error {
 		if err != nil {
 			return err
 		}
+		// Check before touching the app-server, so a refused resume has no
+		// side effects on the thread the live client is using.
+		if err = refuseLiveOwner(opts.Resume); err != nil {
+			return err
+		}
 	}
 	if opts.Resume == "" && opts.Name != "" {
 		// Fail before creating another conversation when its requested name is
@@ -89,6 +122,13 @@ func Launch(opts LaunchOptions) error {
 		return err
 	}
 	defer closeQuietly(lock) // O_CLOEXEC releases it when the owning UI starts.
+	if opts.Resume != "" {
+		// Recheck under the lock. A concurrent launch may have installed a live
+		// owner for this thread while this one waited.
+		if err = refuseLiveOwner(opts.Resume); err != nil {
+			return err
+		}
+	}
 	var client *appClient
 	if opts.Socket == defaultAppSocket() {
 		client, err = ensureAppServerLocked(ctx, codex, opts.Socket, opts.CWD)
@@ -128,17 +168,8 @@ func Launch(opts LaunchOptions) error {
 		}
 	}
 	if _, e := RPC(thread, "info", nil); e == nil {
-		dir, e := threadDir(thread)
-		if e != nil {
-			return e
-		}
-		var existing Config
-		if e = readJSON(filepath.Join(dir, "config.json"), true, &existing); e != nil {
-			return e
-		}
-		if existing.HostPID > 0 && existing.checkHost() == nil {
-			return fmt.Errorf("this thread already belongs to Codex client PID %d; exit its existing UI before resuming", existing.HostPID)
-		}
+		// The owner guard above already allowed this resume; only a worker whose
+		// owner has departed can still be answering here.
 		if err = Stop(thread); err != nil {
 			return err
 		}

@@ -40,8 +40,8 @@ jobs:
             echo "Release tags must be v-prefixed SemVer." >&2
             exit 1
           fi
-          if [[ "$RELEASE_TAG" == v0.1.2 ]]; then
-            echo "v0.1.2 predates release packaging; it must not be replaced or backfilled." >&2
+          if [[ "$RELEASE_TAG" == v0.1.2 || "$RELEASE_TAG" == v0.1.3 ]]; then
+            echo "$RELEASE_TAG predates release packaging; it must not be replaced or backfilled." >&2
             exit 1
           fi
           commit="$(git rev-parse HEAD)"
@@ -130,6 +130,7 @@ jobs:
         run: |
           set -euo pipefail
           test "$RELEASE_TAG" != v0.1.2
+          test "$RELEASE_TAG" != v0.1.3
           assets=(
             "cross-session-codex_${RELEASE_TAG}_darwin_amd64.tar.gz"
             "cross-session-codex_${RELEASE_TAG}_darwin_arm64.tar.gz"

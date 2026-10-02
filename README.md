@@ -12,8 +12,8 @@ is the tested version; the app-server API used here is experimental.
 **Source build:** Go **1.27.1**, Git, and Make. The project pins Go 1.27.1 and builds
 with `CGO_ENABLED=0`, including SQLite. Go downloads dependencies during the build.
 Published binary archives, when available for the selected release, need no Go
-installation. Release v0.1.2 is source-only; the binary packaging described below
-applies to future releases made with the release workflow.
+installation. Releases v0.1.2 and v0.1.3 are source-only; the binary packaging
+described below applies to releases made with the release workflow from v0.1.4.
 
 ## Install by asking Codex
 
@@ -62,7 +62,8 @@ only to peers authorized by the user.
 Choose a release with uploaded binaries from the
 [releases page](https://github.com/Tristan-Wilson/cross-session-codex/releases).
 Replace `vX.Y.Z` below with that exact tag. It is a placeholder, not an existing
-release; v0.1.2 has no binary assets and requires the source-build path below.
+release; v0.1.2 and v0.1.3 have no binary assets and require the source-build path
+below.
 
 This example requires `codex`, GitHub CLI (`gh`), `tar`, `awk`, and either
 `sha256sum` (Linux) or `shasum` (macOS). It downloads into a fresh directory,
@@ -120,12 +121,12 @@ rules.
 
 ### Source installation
 
-The source-only v0.1.2 tag is an explicit example; choose a different published
+The source-only v0.1.3 tag is an explicit example; choose a different published
 tag deliberately when desired. Use a fresh destination, or inspect an existing
 checkout's changes before switching revisions:
 
 ```sh
-csc_source_tag=v0.1.2
+csc_source_tag=v0.1.3
 mkdir -p "$HOME/.local/share"
 git clone --branch "$csc_source_tag" --depth 1 \
   https://github.com/Tristan-Wilson/cross-session-codex.git \
@@ -134,9 +135,10 @@ git -C "$HOME/.local/share/cross-session-codex-source" rev-parse HEAD
 make -C "$HOME/.local/share/cross-session-codex-source" install
 ```
 
-Historical v0.1.2 builds report `0.2.0-dev`; that tag predates version stamping.
-Record its exact source commit instead of treating that version string as release
-provenance. Do not move or rewrite the historical tag to change this behavior.
+Historical v0.1.2 builds report `0.2.0-dev`, and v0.1.3 builds report `0.1.3`;
+both tags predate commit/date stamping. Record their exact source commits instead
+of treating those version strings as full provenance. Do not move or rewrite the
+historical tags to change this behavior.
 
 ### Start the installed CLI
 
@@ -329,7 +331,13 @@ The bridge never grants app-server approval requests on the user's behalf.
 
 A thread using automatic delivery is tied to its launcher's Codex client PID
 and process start time. Restarting a worker preserves that owner; it unregisters
-when the client exits or its identity can no longer be verified. Hooks only
+when the client is confirmed gone or its PID has been reused. If a process check
+fails without establishing an exit, the worker retains its registration and
+inbox, reports unknown activity and a delivery error, and pauses automatic
+delivery until a later check verifies the owner. Maintenance retries every two
+seconds. Starting a worker still requires a verified owner. If a live client's
+worker has stopped, use `start --thread UUID` to restore its saved registration.
+Hooks only
 update existing workers and never create an unowned registration. Explicit
 manual-delivery workers have a 24-hour inactivity lease. Before switching
 conversations, disable messaging for the old thread and exit its UI. Use `launch`
